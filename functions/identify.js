@@ -1,12 +1,92 @@
 export async function onRequestPost({ request, env }) {
   const body = await request.json();
-  const imageBase64 = body.image;
+  const image = body.image;
 
-  const openaiKey = env.OPENAI_API_KEY;
+  // 环境变量
+  const geminiKey = env.GEMINI_API_KEY;
   const deepseekKey = env.DEEPSEEK_API_KEY;
+  const openaiKey = env.OPENAI_API_KEY;
 
-  // ======= 调用 OpenAI =======
-  async function callOpenAI() {
+  // -----------------------------------------------------
+  // 1️⃣ Gemini（优先。免费且可靠）
+  // -----------------------------------------------------
+  if (geminiKey) {
+    try {
+      const res = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + geminiKey,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: "Identify the bird species in this image." },
+                  { inline_data: { mime_type: "image/jpeg", data: image } }
+                ]
+              }
+            ]
+          })
+        }
+      );
+
+      const json = await res.json();
+
+      if (json?.candidates?.[0]?.content?.parts?.[0]?.text) {
+        return new Response(
+          JSON.stringify({ model: "gemini", result: json }, null, 2),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+    } catch (err) {
+      console.log("Gemini failed → fallback", err);
+    }
+  }
+
+  // -----------------------------------------------------
+  // 2️⃣ DeepSeek（图像能力不如 Gemini，但能当备份）
+  // -----------------------------------------------------
+  if (deepseekKey) {
+    try {
+      const res = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${deepseekKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "deepseek-chat",
+          messages: [
+            { role: "system", content: "Identify the bird species from the image. Describe the species in detail." },
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "Identify this bird" },
+                { type: "image_url", image_url: image }
+              ]
+            }
+          ]
+        })
+      });
+
+      const json = await res.json();
+
+      // deepseek 不一定成功识图，但如果返回内容，我们就认
+      if (json?.choices?.[0]?.message?.content) {
+        return new Response(
+          JSON.stringify({ model: "deepseek", result: json }, null, 2),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+    } catch (err) {
+      console.log("DeepSeek failed → fallback", err);
+    }
+  }
+
+  // -----------------------------------------------------
+  // 3️⃣ OpenAI（最终兜底）
+  // -----------------------------------------------------
+  if (openaiKey) {
     try {
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -17,12 +97,12 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({
           model: "gpt-4o-mini",
           messages: [
-            { role: "system", content: "Identify the bird from the image." },
+            { role: "system", content: "Identify the bird species from the image." },
             {
               role: "user",
               content: [
-                { type: "text", text: "Identify this bird" },
-                { type: "image_url", image_url: imageBase64 }
+                { type: "text", text: "Identify this bird." },
+                { type: "image_url", image_url: image }
               ]
             }
           ]
@@ -30,60 +110,19 @@ export async function onRequestPost({ request, env }) {
       });
 
       const text = await res.text();
-
-      // 如果 OpenAI 返回 insufficient_quota → 触发 fallback
-      if (text.includes("insufficient_quota") || res.status === 429) {
-        return null;  
-      }
-
-      return JSON.parse(text);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // ======= 调用 DeepSeek =======
-  async function callDeepSeek() {
-    try {
-      const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${deepseekKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "deepseek-chat",
-          messages: [
-            { role: "system", content: "Identify the bird from the image." },
-            {
-              role: "user",
-              content:
-                "This is a bird image encoded in Base64. Identify the bird species:\n\n" +
-                imageBase64
-            }
-          ]
-        })
+      return new Response(text, {
+        headers: { "Content-Type": "application/json" }
       });
-
-      return await res.json();
     } catch (err) {
-      return { error: "DeepSeek request failed", detail: err.toString() };
+      console.log("OpenAI failed", err);
     }
   }
 
-  // ======= 主流程：先 OpenAI → fallback DeepSeek =======
-  let result = null;
-
-  if (openaiKey) {
-    result = await callOpenAI();
-  }
-
-  // 如果 OpenAI 返回 null（失败或无额度）→ 用 DeepSeek
-  if (!result && deepseekKey) {
-    result = await callDeepSeek();
-  }
-
-  return new Response(JSON.stringify(result), {
-    headers: { "Content-Type": "application/json" }
-  });
+  // -----------------------------------------------------
+  // 4️⃣ 全部失败
+  // -----------------------------------------------------
+  return new Response(
+    JSON.stringify({ error: "All AI providers failed." }, null, 2),
+    { headers: { "Content-Type": "application/json" }, status: 500 }
+  );
 }
