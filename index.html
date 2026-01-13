@@ -24,7 +24,7 @@
       reader.onload = async () => {
         const base64 = reader.result;
 
-        const res = await fetch("/api/identify", {
+        const res = await fetch("/identify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image: base64 })
