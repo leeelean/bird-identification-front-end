@@ -1,13 +1,13 @@
-export async function onRequestPost(context) {
-  const body = await context.request.json();
+export async function onRequestPost({ request, env }) {
+  const body = await request.json();
   const image = body.image;
 
-  const apiKey = context.env.OPENAI_API_KEY;
+  const apikey = env.OPENAI_API_KEY;
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${apiKey}`,
+      "Authorization": `Bearer ${apikey}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
@@ -30,4 +30,3 @@ export async function onRequestPost(context) {
     headers: { "Content-Type": "application/json" }
   });
 }
-
